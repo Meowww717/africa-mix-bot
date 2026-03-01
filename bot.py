@@ -1,19 +1,15 @@
 import asyncio
 import os
+import sqlite3
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    CallbackQuery
-)
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 
 TOKEN = os.getenv("TOKEN")
-ADMIN_ID = 561261084
+ADMIN_ID = 561261084  # твій Telegram ID
 
 if not TOKEN:
     raise ValueError("TOKEN not found!")
@@ -21,7 +17,38 @@ if not TOKEN:
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-polls = {}
+# ---------- SQLite setup ----------
+conn = sqlite3.connect("bot.db")
+cursor = conn.cursor()
+
+# Таблиці
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    first_name TEXT,
+    last_name TEXT,
+    username TEXT,
+    gender TEXT
+)
+""")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS meetings (
+    message_id INTEGER PRIMARY KEY,
+    day TEXT,
+    time TEXT
+)
+""")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS participants (
+    meeting_id INTEGER,
+    user_id INTEGER,
+    partner_id INTEGER,
+    PRIMARY KEY(meeting_id, user_id, partner_id)
+)
+""")
+conn.commit()
+
+# ---------- FSM ----------
 
 
 class CreateMeeting(StatesGroup):
@@ -30,69 +57,106 @@ class CreateMeeting(StatesGroup):
 
 
 class AddPartner(StatesGroup):
-    waiting_for_name = State()
+    choosing_partner = State()
 
+# ---------- Keyboards ----------
 
-# ---------- Клавіатури ----------
 
 def days_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="Понеділок", callback_data="day_Понеділок")],
-        [InlineKeyboardButton(text="Середа", callback_data="day_Середа")],
-        [InlineKeyboardButton(text="Пʼятниця", callback_data="day_Пʼятниця")],
-        [InlineKeyboardButton(text="Неділя", callback_data="day_Неділя")]
+        [InlineKeyboardButton("Понеділок", callback_data="day_Понеділок")],
+        [InlineKeyboardButton("Середа", callback_data="day_Середа")],
+        [InlineKeyboardButton("Пʼятниця", callback_data="day_Пʼятниця")],
+        [InlineKeyboardButton("Неділя", callback_data="day_Неділя")],
     ])
 
 
 def time_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="18:00", callback_data="time_18:00")],
-        [InlineKeyboardButton(text="19:00", callback_data="time_19:00")],
-        [InlineKeyboardButton(text="20:00", callback_data="time_20:00")]
+        [InlineKeyboardButton("18:00", callback_data="time_18:00")],
+        [InlineKeyboardButton("19:00", callback_data="time_19:00")],
+        [InlineKeyboardButton("20:00", callback_data="time_20:00")],
     ])
 
 
 def meeting_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⚽ Записатись", callback_data="join")],
-        [InlineKeyboardButton(text="➕ Додати пару",
-                              callback_data="add_partner")],
-        [InlineKeyboardButton(text="❌ Скасувати запис",
-                              callback_data="leave")],
-        [InlineKeyboardButton(text="🗑 Видалити зустріч",
-                              callback_data="delete")]
+        [InlineKeyboardButton("⚽ Записатись", callback_data="join")],
+        [InlineKeyboardButton("➕ Додати пару", callback_data="add_partner")],
+        [InlineKeyboardButton("❌ Скасувати запис", callback_data="leave")],
+        [InlineKeyboardButton("🗑 Видалити зустріч", callback_data="delete")]
     ])
 
 
-# ---------- Форматування ----------
+def admin_user_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("➕ Додати учасника",
+                              callback_data="admin_add_user")],
+        [InlineKeyboardButton("❌ Видалити учасника",
+                              callback_data="admin_del_user")],
+        [InlineKeyboardButton("📋 Показати всіх учасників",
+                              callback_data="admin_list_users")]
+    ])
 
-def format_text(day, time, participants):
-    text = (
-        f"🌍🔥 Африканці, граємо?\n\n"
-        f"⚽ Діставайте кеди — буде спекотно!\n"
-        f"📅 {day}\n"
-        f"🕖 {time}\n"
-        f"📍 Трек\n\n"
-        f"👥 Гравці:\n"
-    )
+# ---------- Format text ----------
 
-    if not participants:
+
+def format_text(meeting_id):
+    cursor.execute(
+        "SELECT day, time FROM meetings WHERE message_id=?", (meeting_id,))
+    meeting = cursor.fetchone()
+    if not meeting:
+        return "Зустріч скасована"
+    day, time = meeting
+    text = f"🌍🔥 Африканці, граємо?\n\n📅 {day}\n🕖 {time}\n📍 Трек\n\n👥 Гравці:\n"
+    cursor.execute("""
+    SELECT u.first_name, u.gender, p.partner_id FROM participants p
+    JOIN users u ON u.user_id = p.user_id
+    WHERE p.meeting_id=?
+    """, (meeting_id,))
+    rows = cursor.fetchall()
+    if not rows:
         text += "Поки що тиша... хто перший? 😏"
     else:
-        for i, p in enumerate(participants, 1):
-            text += f"{i}. {p}\n"
-
+        for i, row in enumerate(rows, 1):
+            name, gender, partner_id = row
+            icon = "👩" if gender == "female" else "👨"
+            if partner_id:
+                cursor.execute(
+                    "SELECT first_name, gender FROM users WHERE user_id=?", (partner_id,))
+                p_row = cursor.fetchone()
+                if p_row:
+                    p_name, p_gender = p_row
+                    p_icon = "👩" if p_gender == "female" else "👨"
+                    text += f"{i}. {name} {icon} + {p_name} {p_icon}\n"
+            else:
+                text += f"{i}. {name} {icon}\n"
     return text
 
+# ---------- User management ----------
 
-# ---------- Створення ----------
+
+def add_user(user_id, first_name, last_name, username, gender):
+    cursor.execute("""
+    INSERT OR REPLACE INTO users(user_id, first_name, last_name, username, gender)
+    VALUES (?, ?, ?, ?, ?)
+    """, (user_id, first_name, last_name, username, gender))
+    conn.commit()
+
+
+def remove_user(user_id):
+    cursor.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+    conn.commit()
+
+# ---------- Handlers ----------
+
+# Створення зустрічі
+
 
 @dp.message(Command("create"))
 async def create_meeting(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         return
-
     await state.set_state(CreateMeeting.choosing_day)
     await message.answer("📅 Обери день:", reply_markup=days_keyboard())
 
@@ -102,11 +166,7 @@ async def choose_day(callback: CallbackQuery, state: FSMContext):
     day = callback.data.split("_")[1]
     await state.update_data(day=day)
     await state.set_state(CreateMeeting.choosing_time)
-
-    await callback.message.edit_text(
-        f"📅 {day}\n\nТепер обери час 🕖",
-        reply_markup=time_keyboard()
-    )
+    await callback.message.edit_text(f"📅 {day}\n\nТепер обери час 🕖", reply_markup=time_keyboard())
     await callback.answer()
 
 
@@ -115,123 +175,138 @@ async def choose_time(callback: CallbackQuery, state: FSMContext):
     time = callback.data.split("_")[1]
     data = await state.get_data()
     day = data["day"]
-
-    text = format_text(day, time, [])
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=meeting_keyboard()
-    )
-
-    polls[callback.message.message_id] = {
-        "day": day,
-        "time": time,
-        "participants": []
-    }
-
+    cursor.execute("INSERT INTO meetings(message_id, day, time) VALUES (?, ?, ?)",
+                   (callback.message.message_id, day, time))
+    conn.commit()
+    text = format_text(callback.message.message_id)
+    await callback.message.edit_text(text, reply_markup=meeting_keyboard())
     await state.clear()
     await callback.answer()
 
+# Запис на тренування
 
-# ---------- Запис ----------
 
 @dp.callback_query(F.data == "join")
 async def join(callback: CallbackQuery):
-    poll = polls.get(callback.message.message_id)
-    if not poll:
+    user = callback.from_user
+    cursor.execute("SELECT * FROM users WHERE user_id=?", (user.id,))
+    if not cursor.fetchone():
+        await callback.answer("Тебе немає в базі користувачів. Адмін має додати.", show_alert=True)
         return
-
-    name = callback.from_user.first_name
-
-    if name not in poll["participants"]:
-        poll["participants"].append(name)
-
-    new_text = format_text(poll["day"], poll["time"], poll["participants"])
-    await callback.message.edit_text(new_text, reply_markup=meeting_keyboard())
+    cursor.execute("INSERT OR IGNORE INTO participants(meeting_id, user_id, partner_id) VALUES (?, ?, ?)",
+                   (callback.message.message_id, user.id, None))
+    conn.commit()
+    text = format_text(callback.message.message_id)
+    await callback.message.edit_text(text, reply_markup=meeting_keyboard())
     await callback.answer()
 
+# Скасувати запис
 
-# ---------- Скасування запису ----------
 
 @dp.callback_query(F.data == "leave")
 async def leave(callback: CallbackQuery):
-    poll = polls.get(callback.message.message_id)
-    if not poll:
-        return
-
-    name = callback.from_user.first_name
-    poll["participants"] = [
-        p for p in poll["participants"] if not p.startswith(name)]
-
-    new_text = format_text(poll["day"], poll["time"], poll["participants"])
-    await callback.message.edit_text(new_text, reply_markup=meeting_keyboard())
+    user_id = callback.from_user.id
+    meeting_id = callback.message.message_id
+    cursor.execute(
+        "DELETE FROM participants WHERE meeting_id=? AND user_id=?", (meeting_id, user_id))
+    cursor.execute(
+        "DELETE FROM participants WHERE meeting_id=? AND partner_id=?", (meeting_id, user_id))
+    conn.commit()
+    text = format_text(meeting_id)
+    await callback.message.edit_text(text, reply_markup=meeting_keyboard())
     await callback.answer()
 
+# Видалити зустріч
 
-# ---------- Додати пару ----------
-
-@dp.callback_query(F.data == "add_partner")
-async def add_partner(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(AddPartner.waiting_for_name)
-    await state.update_data(message_id=callback.message.message_id)
-    await callback.answer("Введи ім’я партнера")
-
-
-@dp.message(AddPartner.waiting_for_name)
-async def process_partner(message: Message, state: FSMContext):
-    data = await state.get_data()
-    message_id = data["message_id"]
-
-    poll = polls.get(message_id)
-    if not poll:
-        return
-
-    user_name = message.from_user.first_name
-    partner_name = message.text.strip()
-
-    updated = False
-    for i, p in enumerate(poll["participants"]):
-        if p.startswith(user_name):
-            poll["participants"][i] = f"{user_name} + {partner_name}"
-            updated = True
-            break
-
-    if not updated:
-        poll["participants"].append(f"{user_name} + {partner_name}")
-
-    new_text = format_text(poll["day"], poll["time"], poll["participants"])
-
-    await message.bot.edit_message_text(
-        chat_id=message.chat.id,
-        message_id=message_id,
-        text=new_text,
-        reply_markup=meeting_keyboard()
-    )
-
-    await state.clear()
-
-
-# ---------- Видалення зустрічі (тільки адмін) ----------
 
 @dp.callback_query(F.data == "delete")
 async def delete_meeting(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("Тільки адмін може видаляти", show_alert=True)
         return
-
-    if callback.message.message_id in polls:
-        del polls[callback.message.message_id]
-
+    meeting_id = callback.message.message_id
+    cursor.execute("DELETE FROM meetings WHERE message_id=?", (meeting_id,))
+    cursor.execute(
+        "DELETE FROM participants WHERE meeting_id=?", (meeting_id,))
+    conn.commit()
     await callback.message.delete()
     await callback.answer()
 
+# Додати пару
 
-# ---------- MAIN ----------
+
+@dp.callback_query(F.data == "add_partner")
+async def add_partner(callback: CallbackQuery, state: FSMContext):
+    meeting_id = callback.message.message_id
+    cursor.execute(
+        "SELECT user_id, first_name FROM users WHERE user_id != ?", (callback.from_user.id,))
+    rows = cursor.fetchall()
+    buttons = [[InlineKeyboardButton(
+        row[1], callback_data=f"partner_{row[0]}")] for row in rows]
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await state.update_data(meeting_id=meeting_id, user_id=callback.from_user.id)
+    await state.set_state(AddPartner.choosing_partner)
+    await callback.message.answer("Оберіть партнера:", reply_markup=kb)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("partner_"))
+async def process_partner(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    meeting_id = data["meeting_id"]
+    user_id = data["user_id"]
+    partner_id = int(callback.data.split("_")[1])
+    cursor.execute("UPDATE participants SET partner_id=? WHERE meeting_id=? AND user_id=?",
+                   (partner_id, meeting_id, user_id))
+    conn.commit()
+    text = format_text(meeting_id)
+    await callback.message.edit_text(text, reply_markup=meeting_keyboard())
+    await state.clear()
+    await callback.answer()
+
+# ---------- Admin manage users ----------
+
+
+@dp.message(Command("manage_users"))
+async def manage_users(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer("Управління учасниками:", reply_markup=admin_user_keyboard())
+
+
+@dp.callback_query(F.data == "admin_add_user")
+async def admin_add_user(callback: CallbackQuery):
+    await callback.message.answer("Щоб додати користувача вручну, введіть: user_id, first_name, last_name, username, gender")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_del_user")
+async def admin_del_user(callback: CallbackQuery):
+    await callback.message.answer("Щоб видалити користувача вручну, введіть: user_id")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_list_users")
+async def admin_list_users(callback: CallbackQuery):
+    cursor.execute("SELECT user_id, first_name, gender FROM users")
+    rows = cursor.fetchall()
+    if not rows:
+        await callback.message.answer("База користувачів порожня")
+        await callback.answer()
+        return
+    text = "📋 Список учасників:\n"
+    for row in rows:
+        icon = "👩" if row[2] == "female" else "👨"
+        text += f"{row[1]} {icon} — ID: {row[0]}\n"
+    await callback.message.answer(text)
+    await callback.answer()
+
+# ---------- Main ----------
+
 
 async def main():
     bot = Bot(token=TOKEN)
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
