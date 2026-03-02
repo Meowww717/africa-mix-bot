@@ -67,37 +67,41 @@ class AdminAddUser(StatesGroup):
 
 def days_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("Понеділок", callback_data="day_Понеділок")],
-        [InlineKeyboardButton("Середа", callback_data="day_Середа")],
-        [InlineKeyboardButton("Пʼятниця", callback_data="day_Пʼятниця")],
-        [InlineKeyboardButton("Неділя", callback_data="day_Неділя")],
+        [InlineKeyboardButton(
+            text="Понеділок", callback_data="day_Понеділок")],
+        [InlineKeyboardButton(text="Середа", callback_data="day_Середа")],
+        [InlineKeyboardButton(text="Пʼятниця", callback_data="day_Пʼятниця")],
+        [InlineKeyboardButton(text="Неділя", callback_data="day_Неділя")],
     ])
 
 
 def time_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("18:00", callback_data="time_18:00")],
-        [InlineKeyboardButton("19:00", callback_data="time_19:00")],
-        [InlineKeyboardButton("20:00", callback_data="time_20:00")],
+        [InlineKeyboardButton(text="18:00", callback_data="time_18:00")],
+        [InlineKeyboardButton(text="19:00", callback_data="time_19:00")],
+        [InlineKeyboardButton(text="20:00", callback_data="time_20:00")],
     ])
 
 
 def meeting_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("⚽ Записатись", callback_data="join")],
-        [InlineKeyboardButton("➕ Додати пару", callback_data="add_partner")],
-        [InlineKeyboardButton("❌ Скасувати запис", callback_data="leave")],
-        [InlineKeyboardButton("🗑 Видалити зустріч", callback_data="delete")]
+        [InlineKeyboardButton(text="⚽ Записатись", callback_data="join")],
+        [InlineKeyboardButton(text="➕ Додати пару",
+                              callback_data="add_partner")],
+        [InlineKeyboardButton(text="❌ Скасувати запис",
+                              callback_data="leave")],
+        [InlineKeyboardButton(text="🗑 Видалити зустріч",
+                              callback_data="delete")]
     ])
 
 
 def admin_user_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("➕ Додати учасника",
+        [InlineKeyboardButton(text="➕ Додати учасника",
                               callback_data="admin_add_user")],
-        [InlineKeyboardButton("❌ Видалити учасника",
+        [InlineKeyboardButton(text="❌ Видалити учасника",
                               callback_data="admin_del_user")],
-        [InlineKeyboardButton("📋 Показати всіх учасників",
+        [InlineKeyboardButton(text="📋 Показати всіх учасників",
                               callback_data="admin_list_users")]
     ])
 
