@@ -1,3 +1,4 @@
+# full_bot_updated.py
 import asyncio
 import os
 import sqlite3
@@ -43,7 +44,7 @@ CREATE TABLE IF NOT EXISTS participants (
     meeting_id INTEGER,
     user_id INTEGER,
     partner_id INTEGER,
-    PRIMARY KEY(meeting_id, user_id, partner_id)
+    PRIMARY KEY(meeting_id, user_id)
 )
 """)
 conn.commit()
@@ -149,8 +150,7 @@ def remove_user(user_id):
     conn.commit()
 
 # ---------- Handlers ----------
-
-# Створення зустрічі
+# Create meeting
 
 
 @dp.message(Command("create"))
@@ -183,7 +183,7 @@ async def choose_time(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
 
-# Запис на тренування
+# Join meeting
 
 
 @dp.callback_query(F.data == "join")
@@ -200,7 +200,7 @@ async def join(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=meeting_keyboard())
     await callback.answer()
 
-# Скасувати запис
+# Leave meeting
 
 
 @dp.callback_query(F.data == "leave")
@@ -216,7 +216,7 @@ async def leave(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=meeting_keyboard())
     await callback.answer()
 
-# Видалити зустріч
+# Delete meeting
 
 
 @dp.callback_query(F.data == "delete")
@@ -232,7 +232,7 @@ async def delete_meeting(callback: CallbackQuery):
     await callback.message.delete()
     await callback.answer()
 
-# Додати пару
+# Add partner
 
 
 @dp.callback_query(F.data == "add_partner")
@@ -264,7 +264,7 @@ async def process_partner(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
 
-# ---------- Admin manage users ----------
+# Admin manage users
 
 
 @dp.message(Command("manage_users"))
@@ -305,8 +305,8 @@ async def admin_list_users(callback: CallbackQuery):
 
 
 async def main():
-    bot = Bot(token=TOKEN)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    bot = Bot(token=TOKEN)
     asyncio.run(main())
