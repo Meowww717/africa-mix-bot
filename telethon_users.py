@@ -1,9 +1,10 @@
 from telethon import TelegramClient
 import asyncio
 
-api_id = 33835492           # твої значення з my.telegram.org
+api_id = 33835492
 api_hash = "8085a2ec391ff98c8185cf0f741945eb"
-group = "africamix"  # або invite link
+group = "https://t.me/+sHiPUqG2ApY5MTgy"
+
 
 client = TelegramClient("session", api_id, api_hash)
 
