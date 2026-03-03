@@ -127,6 +127,20 @@ def get_user_gender(user_id):
 def opposite_gender(gender):
     return "female" if gender == "male" else "male"
 
+
+async def save_state_for_user(bot, user_id, meeting_id, display_name, user_gender, group_chat_id, group_message_id):
+    """Зберігає стейт в контексті особистого чату юзера"""
+    user_state = dp.fsm.get_context(bot=bot, chat_id=user_id, user_id=user_id)
+    await user_state.update_data(
+        meeting_id=meeting_id,
+        user_id=user_id,
+        display_name=display_name,
+        user_gender=user_gender,
+        chat_id=group_chat_id,
+        message_id=group_message_id
+    )
+    await user_state.set_state(JoinMeeting.choosing_solo_or_pair)
+
 # ---------- Keyboards ----------
 
 
@@ -248,7 +262,7 @@ def format_text(meeting_id):
     """, (meeting_id,))
     rows = cursor.fetchall()
 
-    text = f"🌍🔥 Африканці, граємо?\n\n📅 {day}\n🕖 {time}\n\n👥 Гравці:\n"
+    text = f"🌍 Африканці, граємо?\n\n📅 {day}\n🕖 {time}\n\nГравці:\n"
 
     if not rows:
         text += "Поки що тиша... хто перший? 😏"
@@ -284,7 +298,6 @@ async def create_meeting(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         return
     await message.delete()
-
     admin_state = dp.fsm.get_context(
         bot=message.bot, chat_id=ADMIN_ID, user_id=ADMIN_ID)
     await admin_state.update_data(chat_id=message.chat.id)
@@ -353,22 +366,24 @@ async def join_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Ти вже записаний(а)! ✅", show_alert=True)
         return
 
-    await state.update_data(
+    # Зберігаємо стейт для особистого чату юзера
+    user_state = dp.fsm.get_context(
+        bot=callback.bot, chat_id=user.id, user_id=user.id)
+    await user_state.update_data(
         meeting_id=meeting_id,
         user_id=user.id,
         display_name=row[0],
         user_gender=row[1],
-        message_id=callback.message.message_id,
-        chat_id=callback.message.chat.id
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id
     )
-    await state.set_state(JoinMeeting.choosing_solo_or_pair)
+    await user_state.set_state(JoinMeeting.choosing_solo_or_pair)
 
-    # Надсилаємо в особисті
     try:
         await callback.bot.send_message(user.id, "Як хочеш записатись?", reply_markup=solo_or_pair_keyboard())
     except Exception:
         await callback.answer("Спочатку напиши боту в особисті!", show_alert=True)
-        await state.clear()
+        await user_state.clear()
         return
     await callback.answer()
 
@@ -498,7 +513,7 @@ async def cancel_partner(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Скасовано.")
     await callback.answer()
 
-# ---------- Add partner from base (для вже записаних) ----------
+# ---------- Add partner from base ----------
 
 
 @dp.callback_query(F.data == "add_partner_from_base")
@@ -526,20 +541,26 @@ async def add_partner_from_base(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Немає доступних партнерів протилежної статі 😔", show_alert=True)
         return
 
-    await state.update_data(
+    cursor.execute("SELECT first_name FROM users WHERE user_id=?", (user_id,))
+    name_row = cursor.fetchone()
+
+    user_state = dp.fsm.get_context(
+        bot=callback.bot, chat_id=user_id, user_id=user_id)
+    await user_state.update_data(
         meeting_id=meeting_id,
         user_id=user_id,
-        display_name=None,
+        display_name=name_row[0] if name_row else "",
         user_gender=user_gender,
-        message_id=callback.message.message_id,
-        chat_id=callback.message.chat.id
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id
     )
-    await state.set_state(JoinMeeting.choosing_partner)
+    await user_state.set_state(JoinMeeting.choosing_partner)
+
     try:
         await callback.bot.send_message(user_id, "Обери партнера/партнерку:", reply_markup=kb)
     except Exception:
         await callback.answer("Спочатку напиши боту в особисті!", show_alert=True)
-        await state.clear()
+        await user_state.clear()
         return
     await callback.answer()
 
@@ -549,8 +570,6 @@ async def add_partner_from_base(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "add_guest")
 async def add_guest_start(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
-
-    # Перевіряємо що юзер є в базі
     cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
     if not cursor.fetchone():
         await callback.answer("Тебе немає в базі. Попроси адміна додати тебе.", show_alert=True)
@@ -562,17 +581,20 @@ async def add_guest_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Зустріч не знайдена.", show_alert=True)
         return
 
-    await state.update_data(
+    user_state = dp.fsm.get_context(
+        bot=callback.bot, chat_id=user_id, user_id=user_id)
+    await user_state.update_data(
         meeting_id=meeting_id,
         message_id=callback.message.message_id,
         chat_id=callback.message.chat.id
     )
-    await state.set_state(AddGuest.entering_name)
+    await user_state.set_state(AddGuest.entering_name)
+
     try:
         await callback.bot.send_message(user_id, "👤 Введи ім'я гостя:")
     except Exception:
         await callback.answer("Спочатку напиши боту в особисті!", show_alert=True)
-        await state.clear()
+        await user_state.clear()
         return
     await callback.answer()
 
@@ -599,7 +621,6 @@ async def add_guest_gender_save(callback: CallbackQuery, state: FSMContext):
     guest_name = data["guest_name"]
 
     if "partner_name" in data:
-        # Це пара гостей
         gender2 = opposite_gender(gender)
         partner_name = data["partner_name"]
         pid = next_pair_id(meeting_id)
@@ -622,7 +643,6 @@ async def add_guest_gender_save(callback: CallbackQuery, state: FSMContext):
         )
         await callback.message.edit_text(f"✅ Додано пару: {guest_name} / {partner_name}!")
     else:
-        # Одиночний гість
         fake_id = next_guest_id(meeting_id)
         cursor.execute(
             "INSERT INTO participants(meeting_id, user_id, display_name, pair_id, gender) VALUES (?, ?, ?, NULL, ?)",
@@ -676,28 +696,24 @@ async def leave_start(callback: CallbackQuery, state: FSMContext):
 
     pair_id = row[0]
 
-    # Якщо є пара — питаємо що видаляти
     if pair_id:
-        await state.update_data(
+        user_state = dp.fsm.get_context(
+            bot=callback.bot, chat_id=user_id, user_id=user_id)
+        await user_state.update_data(
             meeting_id=meeting_id,
             user_id=user_id,
             pair_id=pair_id,
             message_id=callback.message.message_id,
             chat_id=callback.message.chat.id
         )
-        await state.set_state(LeaveConfirm.choosing_leave_type)
+        await user_state.set_state(LeaveConfirm.choosing_leave_type)
         try:
-            await callback.bot.send_message(
-                user_id,
-                "Ти в парі. Що скасувати?",
-                reply_markup=leave_type_keyboard()
-            )
+            await callback.bot.send_message(user_id, "Ти в парі. Що скасувати?", reply_markup=leave_type_keyboard())
         except Exception:
             await callback.answer("Спочатку напиши боту в особисті!", show_alert=True)
-            await state.clear()
+            await user_state.clear()
             return
     else:
-        # Одиночний — просто видаляємо
         cursor.execute(
             "DELETE FROM participants WHERE meeting_id=? AND user_id=?", (meeting_id, user_id))
         conn.commit()
@@ -712,7 +728,6 @@ async def leave_solo_confirm(callback: CallbackQuery, state: FSMContext):
     user_id = data["user_id"]
     pair_id = data["pair_id"]
 
-    # Видаляємо тільки себе, партнеру знімаємо pair_id
     cursor.execute(
         "DELETE FROM participants WHERE meeting_id=? AND user_id=?", (meeting_id, user_id))
     cursor.execute(
