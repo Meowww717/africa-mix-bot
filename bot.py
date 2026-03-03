@@ -19,7 +19,7 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 # ---------- SQLite setup ----------
-conn = sqlite3.connect("bot.db")
+conn = sqlite3.connect("/data/bot.db")
 cursor = conn.cursor()
 
 cursor.execute("""

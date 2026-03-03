@@ -3,3 +3,7 @@ primary_region = "fra"
 
 [build]
   dockerfile = "Dockerfile"
+
+[mounts]
+  source = "bot_data"
+  destination = "/data"
