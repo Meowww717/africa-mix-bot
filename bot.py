@@ -401,16 +401,6 @@ async def join_solo(callback: CallbackQuery, state: FSMContext):
     )
     conn.commit()
 
-    # --- ТИМЧАСОВЕ ПРИВІТАННЯ ДЛЯ ОЛЕКСІЯ ---
-    if data["user_id"] == 274938010:
-        await callback.message.answer(
-            "🎂 Олексію, вітаю з Днем Народження! 🎉\n"
-            "Нехай здійснюються бажання, побільше життя і активностей, "
-            "неймовірних пригод та міцних, здорових колінок! 🏐 "
-            "Ти чудовий! "
-        )
-    # ---------------------------------------
-
     await callback.bot.edit_message_text(
         format_text(meeting_id),
         chat_id=data["chat_id"],
