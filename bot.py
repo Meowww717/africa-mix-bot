@@ -187,7 +187,7 @@ def solo_or_pair_keyboard():
                               callback_data="join_solo")],
         [InlineKeyboardButton(text="З партнером з чату",
                               callback_data="join_pair")],
-        [InlineKeyboardButton(text="З гостем (не з чату)",
+        [InlineKeyboardButton(text="З гостем",
                               callback_data="join_with_guest")],
     ])
 
@@ -201,8 +201,9 @@ def guest_solo_or_pair_keyboard():
 
 def gender_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Чоловік", callback_data="gender_male")],
-        [InlineKeyboardButton(text="Жінка",   callback_data="gender_female")],
+        [InlineKeyboardButton(text="Хлопець", callback_data="gender_male")],
+        [InlineKeyboardButton(
+            text="Дівчина",   callback_data="gender_female")],
     ])
 
 
@@ -486,14 +487,32 @@ async def join_pair_save(callback: CallbackQuery, state: FSMContext):
     partner_name, partner_gender = p_row
     pid = next_pair_id(meeting_id)
 
-    cursor.execute(
-        "INSERT OR IGNORE INTO participants(meeting_id, user_id, display_name, pair_id, gender) VALUES (?, ?, ?, ?, ?)",
-        (meeting_id, user_id, display_name, pid, user_gender)
-    )
-    cursor.execute(
-        "INSERT OR IGNORE INTO participants(meeting_id, user_id, display_name, pair_id, gender) VALUES (?, ?, ?, ?, ?)",
-        (meeting_id, partner_id, partner_name, pid, partner_gender)
-    )
+    # Перевіряємо чи юзер вже є в учасниках (записаний одиночно)
+    if is_registered(meeting_id, user_id):
+        # Оновлюємо існуючий запис — додаємо pair_id
+        cursor.execute(
+            "UPDATE participants SET pair_id=? WHERE meeting_id=? AND user_id=?",
+            (pid, meeting_id, user_id)
+        )
+    else:
+        # Додаємо нового учасника з парою
+        cursor.execute(
+            "INSERT OR IGNORE INTO participants(meeting_id, user_id, display_name, pair_id, gender) VALUES (?, ?, ?, ?, ?)",
+            (meeting_id, user_id, display_name, pid, user_gender)
+        )
+
+    # Партнера завжди додаємо або оновлюємо
+    if is_registered(meeting_id, partner_id):
+        cursor.execute(
+            "UPDATE participants SET pair_id=? WHERE meeting_id=? AND user_id=?",
+            (pid, meeting_id, partner_id)
+        )
+    else:
+        cursor.execute(
+            "INSERT OR IGNORE INTO participants(meeting_id, user_id, display_name, pair_id, gender) VALUES (?, ?, ?, ?, ?)",
+            (meeting_id, partner_id, partner_name, pid, partner_gender)
+        )
+
     conn.commit()
 
     await callback.bot.edit_message_text(
