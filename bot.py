@@ -231,7 +231,7 @@ async def create_meeting(message: Message, state: FSMContext):
     await message.bot.send_message(ADMIN_ID, "📅 Обери день:", reply_markup=days_keyboard())
 
 
-@dp.callback_query(F.data.startswith("day_"))
+@dp.callback_query(F.data.startswith("day_"), CreateMeeting.choosing_day)
 async def choose_day(callback: CallbackQuery, state: FSMContext):
     day = callback.data.split("_", 1)[1]
     await state.update_data(day=day)
@@ -240,7 +240,7 @@ async def choose_day(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("time_"))
+@dp.callback_query(F.data.startswith("time_"), CreateMeeting.choosing_time)
 async def choose_time(callback: CallbackQuery, state: FSMContext):
     time_val = callback.data.split("_", 1)[1]
     data = await state.get_data()

@@ -1,6 +1,7 @@
 # База даних
 bot.db
 
+import_users.py
 # Telethon сесія (містить токен авторизації!)
 session.session
 session.session-journal

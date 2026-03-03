@@ -2,8 +2,8 @@ from telethon import TelegramClient
 import asyncio
 import os
 
-api_id = int(os.getenv("TELEGRAM_API_ID"))
-api_hash = os.getenv("TELEGRAM_API_HASH")
+api_id = 33835492
+api_hash = "8085a2ec391ff98c8185cf0f741945eb"
 group = "https://t.me/+sHiPUqG2ApY5MTgy"
 
 
