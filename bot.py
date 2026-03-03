@@ -378,8 +378,7 @@ async def add_guest_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddGuest.entering_guest_name)
     await callback.message.answer(
         "👤 Введи ім'я гостя.\n"
-        "Щоб додати пару — напиши через '+', наприклад:\n"
-        "<b>Валя + Льоша</b>",
+        "Щоб додати пару — напиши через '+' імена\n",
         parse_mode="HTML"
     )
     await callback.answer()
