@@ -1,5 +1,6 @@
 import asyncio
 import os
+from dotenv import load_dotenv
 import sqlite3
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -8,8 +9,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 
+
 TOKEN = os.getenv("TOKEN")
-ADMIN_ID = 561261084
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 if not TOKEN:
     raise ValueError("TOKEN not found!")
@@ -478,7 +480,8 @@ async def delete_meeting(callback: CallbackQuery):
 async def manage_users(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    await message.answer("Управління учасниками:", reply_markup=admin_user_keyboard())
+    bot = message.bot
+    await bot.send_message(ADMIN_ID, "Управління учасниками:", reply_markup=admin_user_keyboard())
 
 
 @dp.callback_query(F.data == "admin_add_user")
@@ -487,7 +490,8 @@ async def admin_add_user_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Немає доступу", show_alert=True)
         return
     await state.set_state(AdminAddUser.waiting_for_user)
-    await callback.message.answer(
+    await callback.bot.send_message(
+        ADMIN_ID,
         "Введіть дані у форматі:\n"
         "<code>user_id, first_name, last_name, username, gender</code>\n\n"
         "gender: <b>male</b> або <b>female</b>",
@@ -506,9 +510,9 @@ async def admin_add_user_receive(message: Message, state: FSMContext):
             VALUES (?, ?, ?, ?, ?)
         """, (int(user_id), first_name, last_name, username, gender))
         conn.commit()
-        await message.answer(f"✅ Користувач {first_name} доданий!")
+        await message.bot.send_message(ADMIN_ID, f"✅ Користувач {first_name} доданий!")
     except Exception as e:
-        await message.answer(f"❌ Помилка: {e}\nПереконайся що формат правильний.")
+        await message.bot.send_message(ADMIN_ID, f"❌ Помилка: {e}\nПереконайся що формат правильний.")
     await state.clear()
 
 
@@ -518,7 +522,7 @@ async def admin_del_user_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Немає доступу", show_alert=True)
         return
     await state.set_state(AdminDeleteUser.waiting_for_id)
-    await callback.message.answer("Введіть <b>user_id</b> для видалення:", parse_mode="HTML")
+    await callback.bot.send_message(ADMIN_ID, "Введіть <b>user_id</b> для видалення:", parse_mode="HTML")
     await callback.answer()
 
 
@@ -528,9 +532,9 @@ async def admin_del_user_receive(message: Message, state: FSMContext):
         cursor.execute("DELETE FROM users WHERE user_id=?",
                        (int(message.text),))
         conn.commit()
-        await message.answer(f"✅ Користувач з ID {message.text} видалений")
+        await message.bot.send_message(ADMIN_ID, f"✅ Користувач з ID {message.text} видалений")
     else:
-        await message.answer("❌ Введіть числовий user_id")
+        await message.bot.send_message(ADMIN_ID, "❌ Введіть числовий user_id")
     await state.clear()
 
 
@@ -542,13 +546,13 @@ async def admin_list_users(callback: CallbackQuery):
     cursor.execute("SELECT user_id, first_name, gender FROM users")
     rows = cursor.fetchall()
     if not rows:
-        await callback.message.answer("База користувачів порожня")
+        await callback.bot.send_message(ADMIN_ID, "База користувачів порожня")
     else:
         text = "📋 Список учасників:\n"
         for uid, fname, gender in rows:
             icon = "♀️" if gender == "female" else "♂️"
             text += f"{fname} {icon} — ID: {uid}\n"
-        await callback.message.answer(text)
+        await callback.bot.send_message(ADMIN_ID, text)
     await callback.answer()
 
 # ---------- Main ----------
