@@ -219,8 +219,10 @@ def format_text(meeting_id):
 async def create_meeting(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         return
+    await message.delete()
+    await state.update_data(chat_id=message.chat.id)
     await state.set_state(CreateMeeting.choosing_day)
-    await message.answer("📅 Обери день:", reply_markup=days_keyboard())
+    await message.bot.send_message(ADMIN_ID, "📅 Обери день:", reply_markup=days_keyboard())
 
 
 @dp.callback_query(F.data.startswith("day_"))
@@ -237,16 +239,24 @@ async def choose_time(callback: CallbackQuery, state: FSMContext):
     time_val = callback.data.split("_", 1)[1]
     data = await state.get_data()
     day = data["day"]
+    chat_id = data["chat_id"]
+
+    sent = await callback.bot.send_message(
+        chat_id,
+        "⏳ Завантаження...",
+        reply_markup=meeting_keyboard()
+    )
 
     cursor.execute(
         "INSERT INTO meetings(message_id, chat_id, day, time) VALUES (?, ?, ?, ?)",
-        (callback.message.message_id, callback.message.chat.id, day, time_val)
+        (sent.message_id, chat_id, day, time_val)
     )
     conn.commit()
     meeting_id = cursor.lastrowid
 
     text = format_text(meeting_id)
-    await callback.message.edit_text(text, reply_markup=meeting_keyboard())
+    await sent.edit_text(text, reply_markup=meeting_keyboard())
+    await callback.message.edit_text("✅ Зустріч створена!")
     await state.clear()
     await callback.answer()
 
