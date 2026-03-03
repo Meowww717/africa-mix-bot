@@ -3,7 +3,7 @@ import os
 import sqlite3
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -231,7 +231,7 @@ async def create_meeting(message: Message, state: FSMContext):
     await message.bot.send_message(ADMIN_ID, "📅 Обери день:", reply_markup=days_keyboard())
 
 
-@dp.callback_query(F.data.startswith("day_"), CreateMeeting.choosing_day)
+@dp.callback_query(F.data.startswith("day_"))
 async def choose_day(callback: CallbackQuery, state: FSMContext):
     day = callback.data.split("_", 1)[1]
     await state.update_data(day=day)
@@ -240,7 +240,7 @@ async def choose_day(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("time_"), CreateMeeting.choosing_time)
+@dp.callback_query(F.data.startswith("time_"))
 async def choose_time(callback: CallbackQuery, state: FSMContext):
     time_val = callback.data.split("_", 1)[1]
     data = await state.get_data()
@@ -586,8 +586,16 @@ async def admin_add_user_receive(message: Message, state: FSMContext):
     try:
         parts = [x.strip() for x in message.text.split(",")]
         user_id, first_name, last_name, username, gender = parts
+
+        cursor.execute(
+            "SELECT user_id FROM users WHERE user_id=?", (int(user_id),))
+        if cursor.fetchone():
+            await message.bot.send_message(ADMIN_ID, f"⚠️ Користувач з ID {user_id} вже є в базі! Щоб оновити — спочатку видали його.")
+            await state.clear()
+            return
+
         cursor.execute("""
-            INSERT OR REPLACE INTO users(user_id, first_name, last_name, username, gender)
+            INSERT INTO users(user_id, first_name, last_name, username, gender)
             VALUES (?, ?, ?, ?, ?)
         """, (int(user_id), first_name, last_name, username, gender))
         conn.commit()
