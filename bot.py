@@ -69,6 +69,10 @@ class AddGuest(StatesGroup):
     entering_guest_name = State()
 
 
+class AddPartner(StatesGroup):
+    entering_partner_name = State()
+
+
 class AdminAddUser(StatesGroup):
     waiting_for_user = State()
 
@@ -136,6 +140,8 @@ def meeting_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⚽ Записатись",
                               callback_data="join")],
+        [InlineKeyboardButton(text="👫 Додати партнера",
+                              callback_data="add_partner")],
         [InlineKeyboardButton(text="👤 Додати гостя",
                               callback_data="add_guest")],
         [InlineKeyboardButton(text="❌ Скасувати запис",
@@ -355,6 +361,74 @@ async def join_pair_save(message: Message, state: FSMContext):
     await message.answer(f"✅ Записано пару: {display_name} + {partner_name}!")
     await state.clear()
 
+# ---------- Add partner (для вже записаних одиночно) ----------
+
+
+@dp.callback_query(F.data == "add_partner")
+async def add_partner_start(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    meeting_id = get_meeting_id(
+        callback.message.message_id, callback.message.chat.id)
+    if not meeting_id:
+        await callback.answer("Зустріч не знайдена.", show_alert=True)
+        return
+    if not is_registered(meeting_id, user_id):
+        await callback.answer("Спочатку запишись на зустріч ⚽", show_alert=True)
+        return
+
+    # Перевіряємо чи вже є партнер
+    cursor.execute(
+        "SELECT pair_id FROM participants WHERE meeting_id=? AND user_id=?",
+        (meeting_id, user_id)
+    )
+    row = cursor.fetchone()
+    if row and row[0]:
+        await callback.answer("Ти вже в парі! Спочатку скасуй запис ❌", show_alert=True)
+        return
+
+    await state.update_data(
+        meeting_id=meeting_id,
+        user_id=user_id,
+        message_id=callback.message.message_id,
+        chat_id=callback.message.chat.id
+    )
+    await state.set_state(AddPartner.entering_partner_name)
+    await callback.message.answer("👫 Введи ім'я свого партнера/партнерки:")
+    await callback.answer()
+
+
+@dp.message(AddPartner.entering_partner_name)
+async def add_partner_save(message: Message, state: FSMContext):
+    partner_name = message.text.strip()
+    data = await state.get_data()
+    meeting_id = data["meeting_id"]
+    user_id = data["user_id"]
+
+    pid = next_pair_id(meeting_id)
+    guest_id = next_guest_id(meeting_id)
+
+    # Оновлюємо існуючий запис — додаємо pair_id
+    cursor.execute(
+        "UPDATE participants SET pair_id=? WHERE meeting_id=? AND user_id=?",
+        (pid, meeting_id, user_id)
+    )
+    # Додаємо партнера як гостя
+    cursor.execute(
+        "INSERT OR IGNORE INTO participants(meeting_id, user_id, display_name, pair_id) VALUES (?, ?, ?, ?)",
+        (meeting_id, guest_id, partner_name, pid)
+    )
+    conn.commit()
+
+    text = format_text(meeting_id)
+    await message.bot.edit_message_text(
+        text,
+        chat_id=data["chat_id"],
+        message_id=data["message_id"],
+        reply_markup=meeting_keyboard()
+    )
+    await message.answer(f"✅ Партнер {partner_name} доданий!")
+    await state.clear()
+
 # ---------- Add guest ----------
 
 
@@ -488,8 +562,7 @@ async def delete_meeting(callback: CallbackQuery):
 async def manage_users(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    bot = message.bot
-    await bot.send_message(ADMIN_ID, "Управління учасниками:", reply_markup=admin_user_keyboard())
+    await message.bot.send_message(ADMIN_ID, "Управління учасниками:", reply_markup=admin_user_keyboard())
 
 
 @dp.callback_query(F.data == "admin_add_user")
