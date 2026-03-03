@@ -1,13 +1,9 @@
-from dotenv import load_dotenv
 from telethon import TelegramClient
 import asyncio
 import sys
 
 # Фікс для Windows консолі
 sys.stdout.reconfigure(encoding='utf-8')
-
-
-load_dotenv()
 
 api_id = int(os.getenv("TELEGRAM_API_ID"))
 api_hash = os.getenv("TELEGRAM_API_HASH")

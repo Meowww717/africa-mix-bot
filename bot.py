@@ -1,6 +1,5 @@
 import asyncio
 import os
-from dotenv import load_dotenv
 import sqlite3
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
