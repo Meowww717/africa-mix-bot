@@ -856,7 +856,7 @@ async def leave_pair_confirm(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "shuffle_pairs")
 async def shuffle_pairs(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_ID:
         await callback.answer("Тільки адмін може розбивати по парах", show_alert=True)
         return
 
@@ -875,6 +875,17 @@ async def shuffle_pairs(callback: CallbackQuery):
 
     males = [(uid, name, g) for uid, name, g in singles if g == "male"]
     females = [(uid, name, g) for uid, name, g in singles if g == "female"]
+
+    if not males and not females:
+        await callback.answer("Немає одиночних гравців.", show_alert=True)
+        return
+
+    if not males or not females:
+        await callback.answer(
+            "Усі одиночні гравці однієї статі — пари неможливо створити 😔",
+            show_alert=True
+        )
+        return
 
     random.shuffle(males)
     random.shuffle(females)
