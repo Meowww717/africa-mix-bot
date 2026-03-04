@@ -66,6 +66,7 @@ class JoinMeeting(StatesGroup):
     choosing_solo_or_pair = State()
     choosing_partner = State()
     entering_guest_partner_name = State()
+    entering_manual_partner_name = State()
 
 
 class AddGuest(StatesGroup):
@@ -216,6 +217,8 @@ def leave_type_keyboard():
 
 def partners_keyboard(meeting_id, user_gender):
     needed_gender = opposite_gender(user_gender)
+
+    # Люди з бази що ще не записались
     cursor.execute("""
         SELECT u.user_id, u.first_name
         FROM users u
@@ -224,11 +227,26 @@ def partners_keyboard(meeting_id, user_gender):
             SELECT user_id FROM participants WHERE meeting_id=?
         )
     """, (needed_gender, meeting_id))
-    rows = cursor.fetchall()
-    if not rows:
-        return None
-    buttons = [[InlineKeyboardButton(
-        text=row[1], callback_data=f"pick_partner_{row[0]}")] for row in rows]
+    from_base = cursor.fetchall()
+
+    # Вже записані одиночні учасники протилежної статі (включно з гостями)
+    cursor.execute("""
+        SELECT p.user_id, p.display_name
+        FROM participants p
+        WHERE p.meeting_id=? AND p.gender=? AND p.pair_id IS NULL
+    """, (meeting_id, needed_gender))
+    already_registered = cursor.fetchall()
+
+    buttons = []
+    for uid, name in from_base:
+        buttons.append([InlineKeyboardButton(
+            text=name, callback_data=f"pick_partner_{uid}")])
+    for uid, name in already_registered:
+        buttons.append([InlineKeyboardButton(
+            text=f"{name} (вже записаний)", callback_data=f"pick_partner_{uid}")])
+
+    buttons.append([InlineKeyboardButton(
+        text="✍️ Інша людина (не з чату)", callback_data="pick_partner_guest")])
     buttons.append([InlineKeyboardButton(
         text="❌ Скасувати", callback_data="cancel_partner")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -426,6 +444,55 @@ async def join_pair_choose(callback: CallbackQuery, state: FSMContext):
     await state.set_state(JoinMeeting.choosing_partner)
     await callback.message.edit_text("Обери партнера/партнерку:", reply_markup=kb)
     await callback.answer()
+
+
+@dp.callback_query(StateFilter(JoinMeeting.choosing_partner), F.data == "pick_partner_guest")
+async def pick_partner_guest_ask(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(JoinMeeting.entering_manual_partner_name)
+    await callback.message.edit_text(
+        "Введи ім'я партнера/партнерки (буде автоматично іншої статі):"
+    )
+    await callback.answer()
+
+
+@dp.message(StateFilter(JoinMeeting.entering_manual_partner_name))
+async def pick_partner_guest_save(message: Message, state: FSMContext):
+    guest_name = message.text.strip()
+    data = await state.get_data()
+    meeting_id = data["meeting_id"]
+    user_id = data["user_id"]
+    display_name = data["display_name"]
+    user_gender = data["user_gender"]
+    guest_gender = opposite_gender(user_gender)
+
+    pid = next_pair_id(meeting_id)
+    guest_id = next_guest_id(meeting_id)
+
+    if is_registered(meeting_id, user_id):
+        cursor.execute(
+            "UPDATE participants SET pair_id=? WHERE meeting_id=? AND user_id=?",
+            (pid, meeting_id, user_id)
+        )
+    else:
+        cursor.execute(
+            "INSERT OR IGNORE INTO participants(meeting_id, user_id, display_name, pair_id, gender) VALUES (?, ?, ?, ?, ?)",
+            (meeting_id, user_id, display_name, pid, user_gender)
+        )
+
+    cursor.execute(
+        "INSERT OR IGNORE INTO participants(meeting_id, user_id, display_name, pair_id, gender) VALUES (?, ?, ?, ?, ?)",
+        (meeting_id, guest_id, guest_name, pid, guest_gender)
+    )
+    conn.commit()
+
+    await message.bot.edit_message_text(
+        format_text(meeting_id),
+        chat_id=data["chat_id"],
+        message_id=data["message_id"],
+        reply_markup=meeting_keyboard()
+    )
+    await message.answer(f"✅ Записано пару: {display_name} / {guest_name}!")
+    await state.clear()
 
 
 @dp.callback_query(StateFilter(JoinMeeting.choosing_solo_or_pair), F.data == "join_with_guest")
