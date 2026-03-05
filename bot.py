@@ -14,9 +14,12 @@ from aiogram.fsm.storage.memory import MemoryStorage
 TOKEN = os.getenv("TOKEN")
 ADMIN_IDS = set(int(x.strip())
                 for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())
+BOT_USERNAME = "AfricaMixBot"
 
 if not TOKEN:
     raise ValueError("TOKEN not found!")
+if not ADMIN_IDS:
+    raise ValueError("ADMIN_IDS not found!")
 
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -80,6 +83,13 @@ class AddGuest(StatesGroup):
     choosing_guest_gender = State()
 
 
+class ManageGuest(StatesGroup):
+    choosing_guest_to_delete = State()
+    choosing_guest_for_pair = State()
+    entering_pair_for_guest = State()
+    choosing_pair_gender = State()
+
+
 class LeaveConfirm(StatesGroup):
     choosing_leave_type = State()
 
@@ -93,9 +103,9 @@ class AdminDeleteUser(StatesGroup):
 
 
 class GameSetup(StatesGroup):
-    choosing_courts = State()          # 4 команди: питаємо к-сть кортів
-    choosing_mode_4_1court = State()   # 4 команди, 1 корт: сайдаути чи ігри
-    choosing_mode_6 = State()          # 6 команд: сайдаути чи ігри
+    choosing_courts = State()
+    choosing_mode_4_1court = State()
+    choosing_mode_6 = State()
 
 # ---------- Helpers ----------
 
@@ -155,6 +165,15 @@ def opposite_gender(gender):
     return "female" if gender == "male" else "male"
 
 
+def get_meeting_header(meeting_id):
+    cursor.execute(
+        "SELECT day, time FROM meetings WHERE meeting_id=?", (meeting_id,))
+    row = cursor.fetchone()
+    if row:
+        return f"📅 {row[0]} · 🕖 {row[1]}\n\n"
+    return ""
+
+
 def get_pairs_and_singles(meeting_id):
     cursor.execute("""
         SELECT pair_id, display_name, gender
@@ -196,6 +215,14 @@ def single_note_text(singles):
     return f"⚠️ Без пари: {names} — грає з тим хто сидить протилежної статі\n\n"
 
 
+def deep_link_keyboard(meeting_id):
+    """Клавіатура з кнопкою-посиланням для відкриття бота"""
+    url = f"https://t.me/{BOT_USERNAME}?start=join_{meeting_id}"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Відкрити бота і записатись", url=url)]
+    ])
+
+
 async def update_admin_message(bot, meeting_id):
     cursor.execute(
         "SELECT creator_id, admin_message_id FROM meetings WHERE meeting_id=?",
@@ -219,8 +246,8 @@ async def update_admin_message(bot, meeting_id):
 # ---------- Game schedule generators ----------
 
 
-def schedule_3teams_sideout(pairs_str, singles, num_rounds=7):
-    """3 команди — всі три на одному корті, сайдаути"""
+def schedule_3teams_sideout(meeting_id, pairs_str, singles, num_rounds=7):
+    header = get_meeting_header(meeting_id)
     note = single_note_text(singles)
     lines = []
     for r in range(1, num_rounds + 1):
@@ -230,18 +257,17 @@ def schedule_3teams_sideout(pairs_str, singles, num_rounds=7):
         lines.append(f"🏐 Корт 1: {p[0]} vs {p[1]} vs {p[2]}")
         lines.append("")
     lines.append(f"⏱ ~{num_rounds * 20} хв ({num_rounds} раундів × 20 хв)")
-    return note + "\n".join(lines)
+    return header + note + "\n".join(lines)
 
 
-def schedule_4teams_roundrobin(pairs_str, singles):
-    """4 команди, 1 корт — round-robin 7 раундів, ніхто не сидить 2 рази підряд"""
-    all_matches = list(combinations(range(4), 2))  # 6 унікальних матчів
+def schedule_4teams_roundrobin(meeting_id, pairs_str, singles):
+    header = get_meeting_header(meeting_id)
+    all_matches = list(combinations(range(4), 2))
     note = single_note_text(singles)
     lines = []
     last_sitting = set()
     used = []
 
-    # Намагаємось набрати 7 раундів без повторного сидіння підряд
     pool = all_matches * 3
     random.shuffle(pool)
 
@@ -254,7 +280,6 @@ def schedule_4teams_roundrobin(pairs_str, singles):
         used.append((match, sitting))
         last_sitting = set(sitting)
 
-    # Якщо не набрали 7 — додаємо без перевірки
     if len(used) < 7:
         for match in all_matches:
             if len(used) >= 7:
@@ -273,11 +298,11 @@ def schedule_4teams_roundrobin(pairs_str, singles):
                 f"   ↳ Без пари грає з тим хто сидить протилежної статі")
         lines.append("")
     lines.append(f"⏱ ~{7 * 20} хв (7 раундів × 20 хв)")
-    return note + "\n".join(lines)
+    return header + note + "\n".join(lines)
 
 
-def schedule_4teams_2courts(pairs_str, singles):
-    """4 команди, 2 корти — по 2 на кожному, 7 раундів"""
+def schedule_4teams_2courts(meeting_id, pairs_str, singles):
+    header = get_meeting_header(meeting_id)
     note = single_note_text(singles)
     lines = []
     for r in range(1, 8):
@@ -288,11 +313,11 @@ def schedule_4teams_2courts(pairs_str, singles):
         lines.append(f"🏐 Корт 2: {p[2]} vs {p[3]}")
         lines.append("")
     lines.append(f"⏱ ~{7 * 20} хв (7 раундів × 20 хв)")
-    return note + "\n".join(lines)
+    return header + note + "\n".join(lines)
 
 
-def schedule_5teams(pairs_str, singles, num_rounds=7):
-    """5 команд — 3 сайдаут на корті 1, 2 грають партію на корті 2, рандомна ротація"""
+def schedule_5teams(meeting_id, pairs_str, singles, num_rounds=7):
+    header = get_meeting_header(meeting_id)
     note = single_note_text(singles)
     lines = []
     for r in range(1, num_rounds + 1):
@@ -303,11 +328,11 @@ def schedule_5teams(pairs_str, singles, num_rounds=7):
         lines.append(f"🏐 Корт 2: {p[3]} vs {p[4]}")
         lines.append("")
     lines.append(f"⏱ ~{num_rounds * 20} хв ({num_rounds} раундів × 20 хв)")
-    return note + "\n".join(lines)
+    return header + note + "\n".join(lines)
 
 
-def schedule_6teams_sideout(pairs_str, singles, num_rounds=7):
-    """6 команд, сайдаути — по 3 на кожному корті, рандомна ротація між кортами"""
+def schedule_6teams_sideout(meeting_id, pairs_str, singles, num_rounds=7):
+    header = get_meeting_header(meeting_id)
     note = single_note_text(singles)
     lines = []
     for r in range(1, num_rounds + 1):
@@ -318,18 +343,17 @@ def schedule_6teams_sideout(pairs_str, singles, num_rounds=7):
         lines.append(f"🏐 Корт 2: {p[3]} vs {p[4]} vs {p[5]}")
         lines.append("")
     lines.append(f"⏱ ~{num_rounds * 20} хв ({num_rounds} раундів × 20 хв)")
-    return note + "\n".join(lines)
+    return header + note + "\n".join(lines)
 
 
-def schedule_6teams_games(pairs_str, singles, num_rounds=7):
-    """6 команд, ігри — 2 сидять (не підряд), 4 грають по 2 на корті"""
+def schedule_6teams_games(meeting_id, pairs_str, singles, num_rounds=7):
+    header = get_meeting_header(meeting_id)
     note = single_note_text(singles)
     lines = []
     last_sitting = set()
 
     for r in range(1, num_rounds + 1):
         indices = list(range(6))
-        # Вибираємо 2 що сидять — не ті що сиділи минулого разу
         candidates = [i for i in indices if i not in last_sitting]
         if len(candidates) < 2:
             candidates = indices
@@ -351,11 +375,11 @@ def schedule_6teams_games(pairs_str, singles, num_rounds=7):
         lines.append("")
 
     lines.append(f"⏱ ~{num_rounds * 20} хв ({num_rounds} раундів × 20 хв)")
-    return note + "\n".join(lines)
+    return header + note + "\n".join(lines)
 
 
-def schedule_7teams(pairs_str, singles, num_rounds=7):
-    """7 команд — 4+3 сайдаути, рандомна ротація між кортами"""
+def schedule_7teams(meeting_id, pairs_str, singles, num_rounds=7):
+    header = get_meeting_header(meeting_id)
     note = single_note_text(singles)
     lines = []
     for r in range(1, num_rounds + 1):
@@ -367,11 +391,11 @@ def schedule_7teams(pairs_str, singles, num_rounds=7):
         lines.append(f"🏐 Корт 2 (сайдаут): {p[4]} vs {p[5]} vs {p[6]}")
         lines.append("")
     lines.append(f"⏱ ~{num_rounds * 20} хв ({num_rounds} раундів × 20 хв)")
-    return note + "\n".join(lines)
+    return header + note + "\n".join(lines)
 
 
-def schedule_8plus_teams(pairs_str, singles, num_rounds=7):
-    """8+ команд — ділимо порівну по 2 кортах"""
+def schedule_8plus_teams(meeting_id, pairs_str, singles, num_rounds=7):
+    header = get_meeting_header(meeting_id)
     note = single_note_text(singles)
     lines = []
     n = len(pairs_str)
@@ -396,11 +420,11 @@ def schedule_8plus_teams(pairs_str, singles, num_rounds=7):
         lines.append("")
 
     lines.append(f"⏱ ~{num_rounds * 20} хв ({num_rounds} раундів × 20 хв)")
-    return note + "\n".join(lines)
+    return header + note + "\n".join(lines)
 
 
-def generate_remix(pairs_raw, num_rounds=2):
-    """Перемішує пари зберігаючи гендер М+Ж"""
+def generate_remix(meeting_id, pairs_raw, num_rounds=2):
+    header = get_meeting_header(meeting_id)
     males = [p[0] for p in pairs_raw]
     females = [p[1] for p in pairs_raw]
     lines = ["<b>🔄 Міксовані пари</b>\n"]
@@ -424,7 +448,7 @@ def generate_remix(pairs_raw, num_rounds=2):
             lines.append(f"  {i}. {m} / {f}")
         lines.append("")
 
-    return "\n".join(lines)
+    return header + "\n".join(lines)
 
 # ---------- Keyboards ----------
 
@@ -465,20 +489,19 @@ def sideout_or_games_keyboard():
 
 
 def meeting_keyboard():
-    """Публічна клавіатура — тільки для учасників"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏐 Записатись",      callback_data="join")],
+        [InlineKeyboardButton(text="🏐 Записатись",
+                              callback_data="join")],
         [InlineKeyboardButton(text="👫 Додати партнера",
                               callback_data="add_partner_from_base")],
-        [InlineKeyboardButton(text="👤 Додати гостя",
-                              callback_data="add_guest")],
+        [InlineKeyboardButton(text="👤 Керування гостями",
+                              callback_data="manage_guests")],
         [InlineKeyboardButton(text="❌ Скасувати запис",
                               callback_data="leave")],
     ])
 
 
 def admin_meeting_keyboard(meeting_id=None):
-    """Адмінська клавіатура — тільки в особистих адміна"""
     buttons = [
         [InlineKeyboardButton(text="🔀 Розбити по парах",
                               callback_data="shuffle_pairs")],
@@ -510,6 +533,21 @@ def admin_meeting_keyboard(meeting_id=None):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def manage_guests_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Додати гостя (сам)",
+                              callback_data="guest_add_solo")],
+        [InlineKeyboardButton(text="➕ Додати гостя (парою)",
+                              callback_data="guest_add_pair")],
+        [InlineKeyboardButton(text="➕ Додати пару гостю",
+                              callback_data="guest_add_partner")],
+        [InlineKeyboardButton(text="❌ Видалити гостя",
+                              callback_data="guest_delete")],
+        [InlineKeyboardButton(text="◀️ Назад",
+                              callback_data="guest_back")],
+    ])
+
+
 def solo_or_pair_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Сам(а)",
@@ -518,13 +556,6 @@ def solo_or_pair_keyboard():
                               callback_data="join_pair")],
         [InlineKeyboardButton(text="З гостем",
                               callback_data="join_with_guest")],
-    ])
-
-
-def guest_solo_or_pair_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Самостійно", callback_data="guest_solo")],
-        [InlineKeyboardButton(text="Парою",      callback_data="guest_pair")],
     ])
 
 
@@ -574,6 +605,28 @@ def partners_keyboard(meeting_id, user_gender):
         text="✍️ Інша людина (не з чату)", callback_data="pick_partner_guest")])
     buttons.append([InlineKeyboardButton(
         text="❌ Скасувати", callback_data="cancel_partner")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def guests_list_keyboard(meeting_id, action_prefix):
+    cursor.execute("""
+        SELECT user_id, display_name, pair_id
+        FROM participants
+        WHERE meeting_id=? AND user_id < 0
+        ORDER BY id
+    """, (meeting_id,))
+    guests = cursor.fetchall()
+
+    if not guests:
+        return None
+
+    buttons = []
+    for uid, name, pair_id in guests:
+        label = f"{name}" + (" (у парі)" if pair_id else " (сам)")
+        buttons.append([InlineKeyboardButton(
+            text=label, callback_data=f"{action_prefix}{uid}")])
+    buttons.append([InlineKeyboardButton(text="❌ Скасувати",
+                   callback_data="cancel_guest_action")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -633,6 +686,102 @@ def format_text(meeting_id):
         counter += 1
 
     return text
+
+# ---------- /start з deep link ----------
+
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message, state: FSMContext):
+    args = message.text.split()
+    # args[0] = "/start", args[1] = payload якщо є
+    if len(args) < 2:
+        await message.answer("👋 Привіт! Натисни кнопку в груповому чаті щоб записатись.")
+        return
+
+    payload = args[1]  # наприклад "join_42"
+
+    if payload.startswith("join_"):
+        try:
+            meeting_id = int(payload.split("_")[1])
+        except (IndexError, ValueError):
+            await message.answer("❌ Невірне посилання.")
+            return
+
+        # Перевіряємо чи зустріч існує
+        cursor.execute(
+            "SELECT day, time FROM meetings WHERE meeting_id=?", (meeting_id,))
+        meeting = cursor.fetchone()
+        if not meeting:
+            await message.answer("❌ Зустріч не знайдена або вже видалена.")
+            return
+
+        user = message.from_user
+        cursor.execute(
+            "SELECT first_name, gender FROM users WHERE user_id=?", (user.id,))
+        row = cursor.fetchone()
+        if not row:
+            await message.answer("Тебе немає в базі. Попроси адміна додати тебе.")
+            return
+
+        if is_registered(meeting_id, user.id):
+            await message.answer("Ти вже записаний(а)! ✅")
+            return
+
+        # Зберігаємо стан і питаємо як записатись
+        cursor.execute(
+            "SELECT chat_id, message_id FROM meetings WHERE meeting_id=?", (meeting_id,))
+        m_row = cursor.fetchone()
+
+        await state.update_data(
+            meeting_id=meeting_id,
+            user_id=user.id,
+            display_name=row[0],
+            user_gender=row[1],
+            chat_id=m_row[0] if m_row else None,
+            message_id=m_row[1] if m_row else None
+        )
+        await state.set_state(JoinMeeting.choosing_solo_or_pair)
+        await message.answer(
+            f"📅 {meeting[0]} · 🕖 {meeting[1]}\n\nЯк хочеш записатись?",
+            reply_markup=solo_or_pair_keyboard()
+        )
+
+    elif payload.startswith("guests_"):
+        try:
+            meeting_id = int(payload.split("_")[1])
+        except (IndexError, ValueError):
+            await message.answer("❌ Невірне посилання.")
+            return
+
+        cursor.execute(
+            "SELECT day, time FROM meetings WHERE meeting_id=?", (meeting_id,))
+        meeting = cursor.fetchone()
+        if not meeting:
+            await message.answer("❌ Зустріч не знайдена або вже видалена.")
+            return
+
+        user_id = message.from_user.id
+        cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
+        if not cursor.fetchone():
+            await message.answer("Тебе немає в базі. Попроси адміна додати тебе.")
+            return
+
+        cursor.execute(
+            "SELECT chat_id, message_id FROM meetings WHERE meeting_id=?", (meeting_id,))
+        m_row = cursor.fetchone()
+
+        await state.update_data(
+            meeting_id=meeting_id,
+            chat_id=m_row[0] if m_row else None,
+            message_id=m_row[1] if m_row else None
+        )
+        await message.answer(
+            f"📅 {meeting[0]} · 🕖 {meeting[1]}\n\n👤 Керування гостями:",
+            reply_markup=manage_guests_keyboard()
+        )
+
+    else:
+        await message.answer("👋 Привіт! Натисни кнопку в груповому чаті щоб записатись.")
 
 # ---------- Create meeting ----------
 
@@ -738,10 +887,24 @@ async def join_start(callback: CallbackQuery, state: FSMContext):
     await user_state.set_state(JoinMeeting.choosing_solo_or_pair)
 
     try:
-        await callback.bot.send_message(user.id, "Як хочеш записатись?", reply_markup=solo_or_pair_keyboard())
+        await callback.bot.send_message(
+            user.id, "Як хочеш записатись?", reply_markup=solo_or_pair_keyboard())
     except Exception:
-        await callback.answer("Спочатку напиши боту в особисті!", show_alert=True)
+        # Юзер ще не писав боту — показуємо deep link
+        await callback.answer(
+            "Спочатку відкрий бота — натисни кнопку нижче 👇",
+            show_alert=True
+        )
         await user_state.clear()
+        # Відправляємо в групу повідомлення з кнопкою (тільки цьому юзеру не можемо, тому alert)
+        try:
+            await callback.bot.send_message(
+                callback.message.chat.id,
+                f"👆 {user.first_name}, натисни щоб відкрити бота і записатись:",
+                reply_markup=deep_link_keyboard(meeting_id)
+            )
+        except Exception:
+            pass
         return
     await callback.answer()
 
@@ -777,10 +940,6 @@ async def join_pair_choose(callback: CallbackQuery, state: FSMContext):
     user_gender = data["user_gender"]
 
     kb = partners_keyboard(meeting_id, user_gender)
-    if not kb:
-        await callback.answer("Немає доступних партнерів протилежної статі 😔", show_alert=True)
-        return
-
     await state.set_state(JoinMeeting.choosing_partner)
     await callback.message.edit_text("Обери партнера/партнерку:", reply_markup=kb)
     await callback.answer()
@@ -969,9 +1128,6 @@ async def add_partner_from_base(callback: CallbackQuery, state: FSMContext):
 
     user_gender = get_user_gender(user_id)
     kb = partners_keyboard(meeting_id, user_gender)
-    if not kb:
-        await callback.answer("Немає доступних партнерів протилежної статі 😔", show_alert=True)
-        return
 
     cursor.execute("SELECT first_name FROM users WHERE user_id=?", (user_id,))
     name_row = cursor.fetchone()
@@ -991,16 +1147,27 @@ async def add_partner_from_base(callback: CallbackQuery, state: FSMContext):
     try:
         await callback.bot.send_message(user_id, "Обери партнера/партнерку:", reply_markup=kb)
     except Exception:
-        await callback.answer("Спочатку напиши боту в особисті!", show_alert=True)
+        await callback.answer(
+            "Спочатку відкрий бота — натисни кнопку нижче 👇",
+            show_alert=True
+        )
         await user_state.clear()
+        try:
+            await callback.bot.send_message(
+                callback.message.chat.id,
+                f"👆 {callback.from_user.first_name}, натисни щоб відкрити бота:",
+                reply_markup=deep_link_keyboard(meeting_id)
+            )
+        except Exception:
+            pass
         return
     await callback.answer()
 
-# ---------- Add guest ----------
+# ---------- Manage guests ----------
 
 
-@dp.callback_query(F.data == "add_guest")
-async def add_guest_start(callback: CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "manage_guests")
+async def manage_guests(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
     if not cursor.fetchone():
@@ -1017,32 +1184,88 @@ async def add_guest_start(callback: CallbackQuery, state: FSMContext):
         bot=callback.bot, chat_id=user_id, user_id=user_id)
     await user_state.update_data(
         meeting_id=meeting_id,
-        message_id=callback.message.message_id,
-        chat_id=callback.message.chat.id
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id
     )
-    await user_state.set_state(AddGuest.entering_name)
 
     try:
-        await callback.bot.send_message(user_id, "👤 Введи ім'я гостя:")
+        await callback.bot.send_message(
+            user_id, "👤 Керування гостями:", reply_markup=manage_guests_keyboard())
     except Exception:
-        await callback.answer("Спочатку напиши боту в особисті!", show_alert=True)
-        await user_state.clear()
+        await callback.answer(
+            "Спочатку відкрий бота — натисни кнопку нижче 👇",
+            show_alert=True
+        )
+        try:
+            await callback.bot.send_message(
+                callback.message.chat.id,
+                f"👆 {callback.from_user.first_name}, натисни щоб відкрити бота:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text="▶️ Відкрити бота",
+                        url=f"https://t.me/{BOT_USERNAME}?start=guests_{meeting_id}"
+                    )
+                ]])
+            )
+        except Exception:
+            pass
         return
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "guest_back")
+async def guest_back(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Скасовано.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "cancel_guest_action")
+async def cancel_guest_action(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Скасовано.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "guest_add_solo")
+async def guest_add_solo(callback: CallbackQuery, state: FSMContext):
+    user_state = dp.fsm.get_context(
+        bot=callback.bot, chat_id=callback.from_user.id, user_id=callback.from_user.id)
+    await user_state.update_data(guest_mode="solo")
+    await user_state.set_state(AddGuest.entering_name)
+    await callback.message.edit_text("👤 Введи ім'я гостя:")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "guest_add_pair")
+async def guest_add_pair(callback: CallbackQuery, state: FSMContext):
+    user_state = dp.fsm.get_context(
+        bot=callback.bot, chat_id=callback.from_user.id, user_id=callback.from_user.id)
+    await user_state.update_data(guest_mode="pair")
+    await user_state.set_state(AddGuest.entering_name)
+    await callback.message.edit_text("👤 Введи ім'я першого гостя:")
     await callback.answer()
 
 
 @dp.message(StateFilter(AddGuest.entering_name))
 async def add_guest_name(message: Message, state: FSMContext):
+    data = await state.get_data()
     await state.update_data(guest_name=message.text.strip())
-    await state.set_state(AddGuest.choosing_solo_or_pair)
-    await message.answer("Як додати гостя?", reply_markup=guest_solo_or_pair_keyboard())
+    mode = data.get("guest_mode", "solo")
+    if mode == "pair":
+        await state.set_state(AddGuest.entering_partner_name)
+        await message.answer("Введи ім'я партнера гостя:")
+    else:
+        await state.set_state(AddGuest.choosing_guest_gender)
+        await message.answer(f"Стать для {message.text.strip()}?", reply_markup=gender_keyboard())
 
 
-@dp.callback_query(StateFilter(AddGuest.choosing_solo_or_pair), F.data == "guest_solo")
-async def add_guest_solo_gender(callback: CallbackQuery, state: FSMContext):
+@dp.message(StateFilter(AddGuest.entering_partner_name))
+async def add_guest_pair_partner_name(message: Message, state: FSMContext):
+    await state.update_data(partner_name=message.text.strip())
     await state.set_state(AddGuest.choosing_guest_gender)
-    await callback.message.edit_text("Стать гостя?", reply_markup=gender_keyboard())
-    await callback.answer()
+    data = await state.get_data()
+    await message.answer(f"Стать для {data['guest_name']}?", reply_markup=gender_keyboard())
 
 
 @dp.callback_query(StateFilter(AddGuest.choosing_guest_gender), F.data.startswith("gender_"))
@@ -1095,19 +1318,155 @@ async def add_guest_gender_save(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dp.callback_query(StateFilter(AddGuest.choosing_solo_or_pair), F.data == "guest_pair")
-async def add_guest_pair_ask(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(AddGuest.entering_partner_name)
-    await callback.message.edit_text("Введи ім'я партнера гостя:")
+@dp.callback_query(F.data == "guest_add_partner")
+async def guest_add_partner_start(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    user_state = dp.fsm.get_context(
+        bot=callback.bot, chat_id=user_id, user_id=user_id)
+    data = await user_state.get_data()
+    meeting_id = data.get("meeting_id")
+    if not meeting_id:
+        await callback.answer("Зустріч не знайдена.", show_alert=True)
+        return
+
+    cursor.execute("""
+        SELECT user_id, display_name, gender
+        FROM participants
+        WHERE meeting_id=? AND user_id < 0 AND pair_id IS NULL
+    """, (meeting_id,))
+    solo_guests = cursor.fetchall()
+
+    if not solo_guests:
+        await callback.answer("Немає гостей без пари.", show_alert=True)
+        return
+
+    buttons = []
+    for uid, name, g in solo_guests:
+        buttons.append([InlineKeyboardButton(
+            text=name, callback_data=f"guestpair_{uid}")])
+    buttons.append([InlineKeyboardButton(text="❌ Скасувати",
+                   callback_data="cancel_guest_action")])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await user_state.set_state(ManageGuest.choosing_guest_for_pair)
+    await callback.message.edit_text("Обери гостя якому додати пару:", reply_markup=kb)
     await callback.answer()
 
 
-@dp.message(StateFilter(AddGuest.entering_partner_name))
-async def add_guest_pair_partner_name(message: Message, state: FSMContext):
-    await state.update_data(partner_name=message.text.strip())
-    await state.set_state(AddGuest.choosing_guest_gender)
+@dp.callback_query(StateFilter(ManageGuest.choosing_guest_for_pair), F.data.startswith("guestpair_"))
+async def guest_pair_chosen(callback: CallbackQuery, state: FSMContext):
+    guest_id = int(callback.data.split("_")[1])
+    user_state = dp.fsm.get_context(
+        bot=callback.bot, chat_id=callback.from_user.id, user_id=callback.from_user.id)
+    await user_state.update_data(target_guest_id=guest_id)
+    await user_state.set_state(ManageGuest.entering_pair_for_guest)
+    await callback.message.edit_text("Введи ім'я партнера для цього гостя:")
+    await callback.answer()
+
+
+@dp.message(StateFilter(ManageGuest.entering_pair_for_guest))
+async def guest_pair_name_entered(message: Message, state: FSMContext):
+    partner_name = message.text.strip()
     data = await state.get_data()
-    await message.answer(f"Стать для {data['guest_name']}?", reply_markup=gender_keyboard())
+    meeting_id = data["meeting_id"]
+    guest_id = data["target_guest_id"]
+
+    cursor.execute("SELECT gender, display_name FROM participants WHERE meeting_id=? AND user_id=?",
+                   (meeting_id, guest_id))
+    row = cursor.fetchone()
+    if not row:
+        await message.answer("Гість не знайдений.")
+        await state.clear()
+        return
+
+    guest_gender, guest_name = row
+    partner_gender = opposite_gender(guest_gender)
+    pid = next_pair_id(meeting_id)
+    partner_id = next_guest_id(meeting_id)
+
+    cursor.execute(
+        "UPDATE participants SET pair_id=? WHERE meeting_id=? AND user_id=?",
+        (pid, meeting_id, guest_id)
+    )
+    cursor.execute(
+        "INSERT INTO participants(meeting_id, user_id, display_name, pair_id, gender) VALUES (?, ?, ?, ?, ?)",
+        (meeting_id, partner_id, partner_name, pid, partner_gender)
+    )
+    conn.commit()
+
+    await message.bot.edit_message_text(
+        format_text(meeting_id),
+        chat_id=data["chat_id"],
+        message_id=data["message_id"],
+        reply_markup=meeting_keyboard()
+    )
+    await update_admin_message(message.bot, meeting_id)
+    await message.answer(f"✅ Пару додано: {guest_name} / {partner_name}!")
+    await state.clear()
+
+
+@dp.callback_query(F.data == "guest_delete")
+async def guest_delete_start(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    user_state = dp.fsm.get_context(
+        bot=callback.bot, chat_id=user_id, user_id=user_id)
+    data = await user_state.get_data()
+    meeting_id = data.get("meeting_id")
+    if not meeting_id:
+        await callback.answer("Зустріч не знайдена.", show_alert=True)
+        return
+
+    kb = guests_list_keyboard(meeting_id, "guestdel_")
+    if not kb:
+        await callback.answer("Немає гостей для видалення.", show_alert=True)
+        return
+
+    await user_state.set_state(ManageGuest.choosing_guest_to_delete)
+    await callback.message.edit_text("Кого видалити?", reply_markup=kb)
+    await callback.answer()
+
+
+@dp.callback_query(StateFilter(ManageGuest.choosing_guest_to_delete), F.data.startswith("guestdel_"))
+async def guest_delete_confirm(callback: CallbackQuery, state: FSMContext):
+    guest_id = int(callback.data.split("_")[1])
+    user_state = dp.fsm.get_context(
+        bot=callback.bot, chat_id=callback.from_user.id, user_id=callback.from_user.id)
+    data = await user_state.get_data()
+    meeting_id = data["meeting_id"]
+
+    cursor.execute(
+        "SELECT pair_id, display_name FROM participants WHERE meeting_id=? AND user_id=?",
+        (meeting_id, guest_id)
+    )
+    row = cursor.fetchone()
+    if not row:
+        await callback.answer("Гість не знайдений.", show_alert=True)
+        await state.clear()
+        return
+
+    pair_id, guest_name = row
+
+    if pair_id:
+        cursor.execute(
+            "DELETE FROM participants WHERE meeting_id=? AND pair_id=?", (meeting_id, pair_id))
+        msg = f"✅ Видалено пару з гостем {guest_name}."
+    else:
+        cursor.execute(
+            "DELETE FROM participants WHERE meeting_id=? AND user_id=?", (meeting_id, guest_id))
+        msg = f"✅ Гостя {guest_name} видалено."
+
+    conn.commit()
+
+    await callback.bot.edit_message_text(
+        format_text(meeting_id),
+        chat_id=data["chat_id"],
+        message_id=data["message_id"],
+        reply_markup=meeting_keyboard()
+    )
+    await update_admin_message(callback.bot, meeting_id)
+    await callback.message.edit_text(msg)
+    await state.clear()
+    await callback.answer()
 
 # ---------- Leave ----------
 
@@ -1142,10 +1501,22 @@ async def leave_start(callback: CallbackQuery, state: FSMContext):
         )
         await user_state.set_state(LeaveConfirm.choosing_leave_type)
         try:
-            await callback.bot.send_message(user_id, "Ти в парі. Що скасувати?", reply_markup=leave_type_keyboard())
+            await callback.bot.send_message(
+                user_id, "Ти в парі. Що скасувати?", reply_markup=leave_type_keyboard())
         except Exception:
-            await callback.answer("Спочатку напиши боту в особисті!", show_alert=True)
+            await callback.answer(
+                "Спочатку відкрий бота — натисни кнопку нижче 👇",
+                show_alert=True
+            )
             await user_state.clear()
+            try:
+                await callback.bot.send_message(
+                    callback.message.chat.id,
+                    f"👆 {callback.from_user.first_name}, натисни щоб відкрити бота:",
+                    reply_markup=deep_link_keyboard(meeting_id)
+                )
+            except Exception:
+                pass
             return
     else:
         cursor.execute(
@@ -1306,59 +1677,52 @@ async def game_distribute(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Зустріч не знайдена.", show_alert=True)
         return
     group_chat_id = chat_row[0]
-
     pairs_str = pairs_to_str(pairs_raw)
+    admin_id = callback.from_user.id
 
-    # 2 команди
     if n == 2:
         await callback.answer("2 команди — просто грайте між собою 😊", show_alert=True)
         return
 
-    # 3 команди — сайдаути всі три на одному корті
     if n == 3:
-        text = schedule_3teams_sideout(pairs_str, singles)
+        text = schedule_3teams_sideout(meeting_id, pairs_str, singles)
         await callback.bot.send_message(group_chat_id, text, parse_mode="HTML")
         await callback.answer("✅ Розклад опубліковано!")
         return
 
-    # 4 команди — питаємо к-сть кортів
     if n == 4:
         admin_state = dp.fsm.get_context(
-            bot=callback.bot, chat_id=ADMIN_ID, user_id=ADMIN_ID)
+            bot=callback.bot, chat_id=admin_id, user_id=admin_id)
         await admin_state.update_data(meeting_id=meeting_id, group_chat_id=group_chat_id)
         await admin_state.set_state(GameSetup.choosing_courts)
         await callback.bot.send_message(
-            ADMIN_ID, "4 команди — скільки кортів?", reply_markup=courts_keyboard())
+            admin_id, "4 команди — скільки кортів?", reply_markup=courts_keyboard())
         await callback.answer()
         return
 
-    # 5 команд
     if n == 5:
-        text = schedule_5teams(pairs_str, singles)
+        text = schedule_5teams(meeting_id, pairs_str, singles)
         await callback.bot.send_message(group_chat_id, text, parse_mode="HTML")
         await callback.answer("✅ Розклад опубліковано!")
         return
 
-    # 6 команд — питаємо формат
     if n == 6:
         admin_state = dp.fsm.get_context(
-            bot=callback.bot, chat_id=ADMIN_ID, user_id=ADMIN_ID)
+            bot=callback.bot, chat_id=admin_id, user_id=admin_id)
         await admin_state.update_data(meeting_id=meeting_id, group_chat_id=group_chat_id)
         await admin_state.set_state(GameSetup.choosing_mode_6)
         await callback.bot.send_message(
-            ADMIN_ID, "6 команд — який формат?", reply_markup=sideout_or_games_keyboard())
+            admin_id, "6 команд — який формат?", reply_markup=sideout_or_games_keyboard())
         await callback.answer()
         return
 
-    # 7 команд
     if n == 7:
-        text = schedule_7teams(pairs_str, singles)
+        text = schedule_7teams(meeting_id, pairs_str, singles)
         await callback.bot.send_message(group_chat_id, text, parse_mode="HTML")
         await callback.answer("✅ Розклад опубліковано!")
         return
 
-    # 8+ команд
-    text = schedule_8plus_teams(pairs_str, singles)
+    text = schedule_8plus_teams(meeting_id, pairs_str, singles)
     await callback.bot.send_message(group_chat_id, text, parse_mode="HTML")
     await callback.answer("✅ Розклад опубліковано!")
 
@@ -1374,14 +1738,13 @@ async def game_4teams_courts(callback: CallbackQuery, state: FSMContext):
     pairs_str = pairs_to_str(pairs_raw)
 
     if num_courts == 2:
-        text = schedule_4teams_2courts(pairs_str, singles)
+        text = schedule_4teams_2courts(meeting_id, pairs_str, singles)
         await callback.bot.send_message(group_chat_id, text, parse_mode="HTML")
         await callback.message.edit_text("✅ Розклад опубліковано!")
         await state.clear()
         await callback.answer()
         return
 
-    # 1 корт — питаємо сайдаути чи ігри
     await state.set_state(GameSetup.choosing_mode_4_1court)
     await callback.message.edit_text(
         "4 команди, 1 корт — який формат?", reply_markup=sideout_or_games_keyboard())
@@ -1402,7 +1765,7 @@ async def game_4teams_1court_mode(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             "✅ Сайдаути! Всі 4 команди на 1 корті — розклад не потрібен 😊")
     else:
-        text = schedule_4teams_roundrobin(pairs_str, singles)
+        text = schedule_4teams_roundrobin(meeting_id, pairs_str, singles)
         await callback.bot.send_message(group_chat_id, text, parse_mode="HTML")
         await callback.message.edit_text("✅ Розклад опубліковано!")
 
@@ -1421,9 +1784,9 @@ async def game_6teams_mode(callback: CallbackQuery, state: FSMContext):
     pairs_str = pairs_to_str(pairs_raw)
 
     if mode == "sideout":
-        text = schedule_6teams_sideout(pairs_str, singles)
+        text = schedule_6teams_sideout(meeting_id, pairs_str, singles)
     else:
-        text = schedule_6teams_games(pairs_str, singles)
+        text = schedule_6teams_games(meeting_id, pairs_str, singles)
 
     await callback.bot.send_message(group_chat_id, text, parse_mode="HTML")
     await callback.message.edit_text("✅ Розклад опубліковано!")
@@ -1455,7 +1818,8 @@ async def who_sits_first(callback: CallbackQuery):
         "SELECT chat_id FROM meetings WHERE meeting_id=?", (meeting_id,))
     row = cursor.fetchone()
     if row:
-        text = f"🪑 Перший раунд сидить: <b>{sitting[0]} / {sitting[1]}</b>"
+        header = get_meeting_header(meeting_id)
+        text = f"{header}🪑 Перший раунд сидить: <b>{sitting[0]} / {sitting[1]}</b>"
         await callback.bot.send_message(row[0], text, parse_mode="HTML")
     await callback.answer()
 
@@ -1483,7 +1847,7 @@ async def game_remix(callback: CallbackQuery):
         "SELECT chat_id FROM meetings WHERE meeting_id=?", (meeting_id,))
     row = cursor.fetchone()
     if row:
-        text = generate_remix(pairs_raw)
+        text = generate_remix(meeting_id, pairs_raw)
         await callback.bot.send_message(row[0], text, parse_mode="HTML")
     await callback.answer()
 
@@ -1533,7 +1897,8 @@ async def delete_meeting(callback: CallbackQuery):
 async def manage_users(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
-    await message.bot.send_message(callback.from_user.id, "Управління учасниками:", reply_markup=admin_user_keyboard())
+    await message.bot.send_message(
+        message.from_user.id, "Управління учасниками:", reply_markup=admin_user_keyboard())
 
 
 @dp.callback_query(F.data == "admin_add_user")
@@ -1543,7 +1908,7 @@ async def admin_add_user_start(callback: CallbackQuery, state: FSMContext):
         return
     await state.set_state(AdminAddUser.waiting_for_user)
     await callback.bot.send_message(
-        ADMIN_ID,
+        callback.from_user.id,
         "Введіть дані у форматі:\n"
         "<code>user_id, first_name, last_name, username, gender</code>\n\n"
         "gender: <b>male</b> або <b>female</b>",
@@ -1561,10 +1926,8 @@ async def admin_add_user_receive(message: Message, state: FSMContext):
         cursor.execute(
             "SELECT user_id FROM users WHERE user_id=?", (int(user_id),))
         if cursor.fetchone():
-            await message.bot.send_message(
-                ADMIN_ID,
-                f"⚠️ Користувач з ID {user_id} вже є в базі! Щоб оновити — спочатку видали його."
-            )
+            await message.answer(
+                f"⚠️ Користувач з ID {user_id} вже є в базі! Щоб оновити — спочатку видали його.")
             await state.clear()
             return
 
@@ -1573,9 +1936,9 @@ async def admin_add_user_receive(message: Message, state: FSMContext):
             VALUES (?, ?, ?, ?, ?)
         """, (int(user_id), first_name, last_name, username, gender))
         conn.commit()
-        await message.bot.send_message(callback.from_user.id, f"✅ Користувач {first_name} доданий!")
+        await message.answer(f"✅ Користувач {first_name} доданий!")
     except Exception as e:
-        await message.bot.send_message(callback.from_user.id, f"❌ Помилка: {e}\nПереконайся що формат правильний.")
+        await message.answer(f"❌ Помилка: {e}\nПереконайся що формат правильний.")
     await state.clear()
 
 
@@ -1585,7 +1948,8 @@ async def admin_del_user_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Немає доступу", show_alert=True)
         return
     await state.set_state(AdminDeleteUser.waiting_for_id)
-    await callback.bot.send_message(callback.from_user.id, "Введіть <b>user_id</b> для видалення:", parse_mode="HTML")
+    await callback.bot.send_message(
+        callback.from_user.id, "Введіть <b>user_id</b> для видалення:", parse_mode="HTML")
     await callback.answer()
 
 
@@ -1595,9 +1959,9 @@ async def admin_del_user_receive(message: Message, state: FSMContext):
         cursor.execute("DELETE FROM users WHERE user_id=?",
                        (int(message.text),))
         conn.commit()
-        await message.bot.send_message(callback.from_user.id, f"✅ Користувач з ID {message.text} видалений")
+        await message.answer(f"✅ Користувач з ID {message.text} видалений")
     else:
-        await message.bot.send_message(callback.from_user.id, "❌ Введіть числовий user_id")
+        await message.answer("❌ Введіть числовий user_id")
     await state.clear()
 
 
