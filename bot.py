@@ -12,7 +12,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 
 TOKEN = os.getenv("TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_IDS = set(int(x.strip())
+                for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())
 
 if not TOKEN:
     raise ValueError("TOKEN not found!")
@@ -638,7 +639,7 @@ def format_text(meeting_id):
 
 @dp.message(Command("create"))
 async def create_meeting(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_IDS:
         return
     await message.delete()
     creator_id = message.from_user.id
@@ -651,7 +652,7 @@ async def create_meeting(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("day_"))
 async def choose_day(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         await callback.answer()
         return
     day = callback.data.split("_", 1)[1]
@@ -663,7 +664,7 @@ async def choose_day(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("time_"))
 async def choose_time(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         await callback.answer()
         return
     data = await state.get_data()
@@ -1206,7 +1207,7 @@ async def leave_pair_confirm(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "shuffle_pairs")
 async def shuffle_pairs(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Тільки адмін може розбивати по парах", show_alert=True)
         return
 
@@ -1281,7 +1282,7 @@ async def shuffle_pairs(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "game_distribute")
 async def game_distribute(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Тільки адмін", show_alert=True)
         return
 
@@ -1434,7 +1435,7 @@ async def game_6teams_mode(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "who_sits_first")
 async def who_sits_first(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Тільки адмін", show_alert=True)
         return
 
@@ -1463,7 +1464,7 @@ async def who_sits_first(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "game_remix")
 async def game_remix(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Тільки адмін", show_alert=True)
         return
 
@@ -1491,7 +1492,7 @@ async def game_remix(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "delete")
 async def delete_meeting(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Тільки адмін може видаляти", show_alert=True)
         return
 
@@ -1530,14 +1531,14 @@ async def delete_meeting(callback: CallbackQuery):
 
 @dp.message(Command("manage_users"))
 async def manage_users(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_IDS:
         return
-    await message.bot.send_message(ADMIN_ID, "Управління учасниками:", reply_markup=admin_user_keyboard())
+    await message.bot.send_message(callback.from_user.id, "Управління учасниками:", reply_markup=admin_user_keyboard())
 
 
 @dp.callback_query(F.data == "admin_add_user")
 async def admin_add_user_start(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Немає доступу", show_alert=True)
         return
     await state.set_state(AdminAddUser.waiting_for_user)
@@ -1572,19 +1573,19 @@ async def admin_add_user_receive(message: Message, state: FSMContext):
             VALUES (?, ?, ?, ?, ?)
         """, (int(user_id), first_name, last_name, username, gender))
         conn.commit()
-        await message.bot.send_message(ADMIN_ID, f"✅ Користувач {first_name} доданий!")
+        await message.bot.send_message(callback.from_user.id, f"✅ Користувач {first_name} доданий!")
     except Exception as e:
-        await message.bot.send_message(ADMIN_ID, f"❌ Помилка: {e}\nПереконайся що формат правильний.")
+        await message.bot.send_message(callback.from_user.id, f"❌ Помилка: {e}\nПереконайся що формат правильний.")
     await state.clear()
 
 
 @dp.callback_query(F.data == "admin_del_user")
 async def admin_del_user_start(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Немає доступу", show_alert=True)
         return
     await state.set_state(AdminDeleteUser.waiting_for_id)
-    await callback.bot.send_message(ADMIN_ID, "Введіть <b>user_id</b> для видалення:", parse_mode="HTML")
+    await callback.bot.send_message(callback.from_user.id, "Введіть <b>user_id</b> для видалення:", parse_mode="HTML")
     await callback.answer()
 
 
@@ -1594,27 +1595,27 @@ async def admin_del_user_receive(message: Message, state: FSMContext):
         cursor.execute("DELETE FROM users WHERE user_id=?",
                        (int(message.text),))
         conn.commit()
-        await message.bot.send_message(ADMIN_ID, f"✅ Користувач з ID {message.text} видалений")
+        await message.bot.send_message(callback.from_user.id, f"✅ Користувач з ID {message.text} видалений")
     else:
-        await message.bot.send_message(ADMIN_ID, "❌ Введіть числовий user_id")
+        await message.bot.send_message(callback.from_user.id, "❌ Введіть числовий user_id")
     await state.clear()
 
 
 @dp.callback_query(F.data == "admin_list_users")
 async def admin_list_users(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Немає доступу", show_alert=True)
         return
     cursor.execute("SELECT user_id, first_name, gender FROM users")
     rows = cursor.fetchall()
     if not rows:
-        await callback.bot.send_message(ADMIN_ID, "База користувачів порожня")
+        await callback.bot.send_message(callback.from_user.id, "База користувачів порожня")
     else:
         text = "📋 Список учасників:\n"
         for uid, fname, gender in rows:
             label = "ч" if gender == "male" else "ж"
             text += f"{fname} ({label}) — ID: {uid}\n"
-        await callback.bot.send_message(ADMIN_ID, text)
+        await callback.bot.send_message(callback.from_user.id, text)
     await callback.answer()
 
 # ---------- Main ----------
