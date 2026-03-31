@@ -790,7 +790,10 @@ async def cmd_start(message: Message, state: FSMContext):
 async def create_meeting(message: Message, state: FSMContext):
     if message.from_user.id not in ADMIN_IDS:
         return
-    await message.delete()
+    try:
+        await message.delete()
+    except Exception as e:
+        print("Не вдалося видалити повідомлення:", e)
     creator_id = message.from_user.id
     admin_state = dp.fsm.get_context(
         bot=message.bot, chat_id=creator_id, user_id=creator_id)
